@@ -3,9 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
-	"time"
+
+	"github.com/russross/blackfriday/v2"
 )
 
 type cmdlineArgs struct {
@@ -25,53 +28,40 @@ func init() {
 	flag.Parse()
 }
 
-func PreviewMarkdown(update <-chan string, port int) {
-
-	// Read file the first time
-	// Render html from markdown
-
-	// Setup http server
-	for {
-		filename := <-update
-		fmt.Println(filename)
-
-		// re-read the file
-
-		// Render html from markdown
-	}
-}
-
 func main() {
 	if flag.NArg() == 0 {
 		flag.Usage()
 		os.Exit(1)
 	}
 	filename := flag.Arg(0)
-	lastInfo, err := os.Stat(filename)
+	_, err := os.Stat(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Printf("Previewing %s on port %d\n", filename, cfg.Port)
 
-	updatePreview := make(chan string, 1)
-	go PreviewMarkdown(updatePreview, cfg.Port)
-
-	// Loop, checking the file mtime every second
-	// If it has been modified, tell preview to update
-	for {
-		info, err := os.Stat(filename)
+	preview := func(w http.ResponseWriter, _ *http.Request) {
+		f, err := os.Open(filename)
 		if err != nil {
-			fmt.Println(err)
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-		if info.Size() != lastInfo.Size() || info.ModTime() != lastInfo.ModTime() {
-			lastInfo = info
-
-			// Send message to preview
-			updatePreview <- filename
+			fmt.Printf("Error opening %s: %s\n", filename, err)
+			return
 		}
 
-		time.Sleep(1 * time.Second)
+		// XXX Is this right inside a loop?
+		defer f.Close()
+		markdown, err := ioutil.ReadAll(f)
+		if err != nil {
+			fmt.Printf("Error reading %s: %s\n", filename, err)
+			return
+		}
+
+		// Render html from markdown
+		output := blackfriday.Run(markdown)
+		w.Write(output)
 	}
+
+	http.HandleFunc("/", preview)
+
+	listen := fmt.Sprintf(":%d", cfg.Port)
+	log.Fatal(http.ListenAndServe(listen, nil))
 }
